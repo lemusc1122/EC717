@@ -1,0 +1,493 @@
+% Template from Overleaf https://www.overleaf.com/latex/templates/ieee-conference-template/grfzhhncsfqn 
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{gensymb}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Denoising SAR Data Using Tikhonov Regularization, Gaussian Markov Random Fields \& Plug-and-Play ADMM\\
+%{\footnotesize \textsuperscript{*}Note: Sub-titles are not captured in Xplore and should not be used}
+%\thanks{Identify applicable funding agency here. If none, delete this.}
+}
+
+\author{\IEEEauthorblockN{Christopher Lemus}
+\IEEEauthorblockA{\textit{Department Of Electrical \& Computer Engineering} \\
+\textit{Boston University}\\
+Boston, MA, United States Of America \\
+Lemusc@bu.edu}
+
+}
+
+\maketitle
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+\par Radar is utilized all over the world and probing 24 hours 7 days a week. The applications for radar are plentiful, ranging from automotive, weather, target detection, to geological and topological imaging of surfaces on Earth and celestial bodies. The idea behind a radar is to transmit an electromagnetic pulse of a specific width, turn off transmission and listen for a return. The extraction of information from this returned signal is very similar across all radar systems because it is tied to radar theory. However the construction of images depends strictly on the method chosen and not radar theory, which may or may not cause under- or over-smoothened images based on the chosen algorithm. Here we hope to explore a few of the most well studied types of regularization methods to denoise the inherent speckle associated with raw SAR data.
+\end{abstract}
+
+\begin{IEEEkeywords}
+radar, digital, denoising, imaging, tikhonov, Markhov random field, plug and play, admm
+\end{IEEEkeywords}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\subsection{Background Information}
+\par Synthetic Aperture Radar (SAR) is one of the most pivotal technologies invented within the last 50 years due to allowing a lot of design flexability required to obtain high quality, reasonably priced sensors to be deployed in space\cite{sarHist}. Generally speaking, radars are large aparatus which is a relatively easy problem to work through on ground. However, sending a large aperture to space is more sophistacted because of limited real estate on space ships. The largest SAR aperture in space to date is the NISAR which has a diameter of 12 meters and was deployed like an umbrella \cite{nisar}. Like with any system that images, there are effects that can occur which cause anomalies and artifacts in the final processed product which need to be dealt with. In the SAR community, one of these anomalies is speckle and will be the main focus for us in this paper. There are other radiometric and geometric anomalies that can show up in images like foreshortening/layover, aliasing and shadow\cite{sarIntro} which are associated with physical radar parameters versus speckle which is dependent on the decoherence of phase of returned signal. 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Goals for this paper}
+\par The most critical part in generating a visually intuitive image from SAR data is to obtain all the radar parameters which would allow you to reconstruct the transmitted waveform which is needed to deconvolve from the recevied raw sensor data. After that deconvolution we are left with the raw data from the target. Hence, we sought to find a SAR dataset from the web which provided us with the necessary information. The NASA Alaska Satellite Facility \cite{data} website provides tons of data to the public and in particular we were able to leverage data from the EISCAT Svalbard Radar (ESR) because they provide the parameter files and raw data in one download. Using this as our starting point, we will process the raw data to generate the Single Look Complex image for a couple of different datasets. This SLC data (known as L1 on the NASA website) will be the baseline for all the regulatized images to compare to. From it, we will apply Multi-Look processing \cite{sarIntro} to render the data into an intelligible image of a scene.  
+\par The aim is to apply regulatization methods after the initial SLC is formed and deduce by signal to noise ratio (SNR) which has the best performance. There will also be visuals provided so we can tell for certian what has changed. The following sections will be laid out as follows. Seciton II will review the Theory \& Methodology needed to take the raw data, create SLC image, apply a regularization method and apply multi-look processing. Section III will review the results from application of the theory to the datsets of interest. Section IV will be a summary of the findings. Section V will contain the conclusions based on the results gathered. Acknowledgment, References \& Figures will be at the end of the paper. 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Theory \& Methodology}
+\subsection{SAR Signal Model \& Radar Migration Algorithm}
+\par We can start by defining the LFM chirp waveform which is defined as follows from Mahafza's Radar Systems Analysis textbook Chapter 6.5.2\cite{mahafza} and will be critical in in data processing for SLC images:
+\begin{equation}
+    s(t) = \frac{1}{\sqrt{\tau'}} \operatorname{Rect} \left( \frac{t}{\tau'} \right) e^{j \pi \mu t^2}
+\end{equation} 
+where $\tau'$ is the pulse width of the chirp, \emph{t} is the variation between $\pm\frac{\tau'}{2}$, $\mu$ is the rate of change of frequency of linear freqency modulated (LFM) chirp and \emph{f$_d$} is the Doppler frequency. We can also define the point spread function (PSF), also known as Ambiguity function, as:
+
+\begin{equation}
+    |\chi(\tau; f_d)|^2 = \left| \left( 1 - \frac{|\tau|}{\tau'} \right) \frac{\sin \left( \pi \tau' (\mu \tau + f_d) \left( 1 - \frac{|\tau|}{\tau'} \right) \right)}{\pi \tau' (\mu \tau + f_d) \left( 1 - \frac{|\tau|}{\tau'} \right)} \right|^2
+\end{equation}
+After LFM chirp waveform is known, applying a Range Migartion Algorthim to the raw data that was obtained from the SAR datasets in critical as to account for the effects the motion of radar causes to received signal (Range-Doppler coupling from Mahafza Chapter 7.3.4\cite{mahafza}, geometric effects from squint angle). The steps in the RMA are the following:\\
+\\
+1. Multiply the raw data by squint angle compensation\\
+2. Apply FFT to enter the frequency domain\\
+3. Apply Range and Cross range compensation\\
+4. Apply IFFT to return to time domain\\
+\\
+At this point we have a matrix of data, where each Range and Azimuth bin contains a complex number which represents the processed/compensated data for the returned data.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{About Single Look Complex (SLC) Images}
+\par An excellent journal was published by Lin et al.\cite{linEtAl} which describes with rigor the components required in the generation of SLC images. For our MATLAB simulation, we were able to take the LFM waveform and SAR parameters provided from the datasets to perform a deconvolution operation to obtain the raw data at each corresponding location in the image. The function in MATLAB is called 'rangeMigationLFM' which accepts the necessary inputs and generates our SLC.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Tikhonov Regularization}
+\par Tikhonov regularisation is reliable and a great go-to option. In particular, we desire to solve the following:
+
+\begin{equation}
+    x_\lambda = \operatorname*{argmin}_{x} {\|Ax-b\|^2_2+\lambda\|x\|^2_2}
+\end{equation}
+where \emph{$\lambda$} is the regularization parameter, \emph{A} is the forward operator dependant on the system, \emph{b} is the recorded data vector and \emph{x} represents the true solution (SLC in this case). The idea is to select a value of \emph{$\lambda$} that will not under- or over-smooth the solution\cite{hansen}. This regularization paramter is selected optimally using an L-curve, which plots the residual 2-norm against the solution 2-norm. We will explore how choosing too small, too large and the proper regularization parameter affects the reconstructed image.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Non-Causal Gaussian Markov Random Field} %FCI CH 6 & &
+\par For this project we are focused on non-causal Gaussion Markhov Random Fields to improve the value of a pixel given its neighboring pixels, independent of time since the data exist already. Ultimately we are looking to minimize the following function:
+\begin{equation}
+    \hat{x}_{MAP} = \operatorname*{argmin}_{x\in\Omega} {f(x;y})
+\end{equation}
+where
+\begin{equation}
+    f(x;y) = -\text{log}p_{y|x}(y|x) -\text{log}p(x)
+\end{equation}
+The forward model \emph{p$_{y|x}(y|x)$} needs to be chosen, then the prior model \emph{p(x)}\cite{b6}. Only then do we have the information necessary to solve (5). From Bayes rule we are able to define the forward model below
+\begin{equation}
+    p_{y|x}(y|x) = \frac{p_{x|y}(x|y)p(y)}{p(x)}
+\end{equation}
+where 
+\begin{equation}
+    p_{x|y}(x|y) = \frac{1}{2\pi^{(N/2)}}|R|^{-1/2}exp(\frac{1}{2}(x-\mu(y))^tR_{-1}(x-\mu(y)))
+\end{equation}
+and 
+\begin{equation}
+    p(x) = \frac{1}{(2\pi\sigma^2_x)^{N/2}}|B|^{1/2}exp(-\frac{1}{(2\sigma^2_x)}x^tBx).
+\end{equation}
+Plugging (7) \& (8) into (6) we can re-write the Maximum a Postiori estimate as
+\begin{equation}
+    \hat{x}_{MAP} = \operatorname*{argmin}_{x\in\Omega} {\|y-Ax\|^2 + \frac{1}{(2\sigma^2_x)}x^tBx}
+\end{equation}
+Below we have the MRF Iterated Conditional Modes (ICM) equation which is great for regularizing Gaussian models by increasing the conditional probability\cite{b9mrf}
+\begin{equation}
+X_{i}^{(k+1)} = \frac{Y_i + \lambda \sum_{j \in \mathcal{N}_i} X_j^{(k)}}{1 + n\lambda}
+\end{equation}
+Additionally we chose to apply the MRF using a neighboring kernel k of 4 neighbors versus 8 because don't desire too strong regularization based on surrounding neighboring pixels. We define the kernel below:\\
+\begin{center}
+    k = $\begin{bmatrix} 
+0 & 1 & 0 \\ 
+1 & 0 & 1 \\ 
+0 & 1 & 0 
+\end{bmatrix}$\\
+\end{center}
+Once (10) is computed, we can reintroduce the phase by 
+\begin{equation}
+\hat{X}_{i} = X_i \cdot e^{j\theta_i}
+\end{equation}
+since the phase information was untouched and we only apply the regularization to the real part of the SLC.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Plug-and-Play ADMM}
+\par The final algorithm of interest will be a plug-and-play variant, Alternating Direction Method of Multipliers (ADMM). The idea with this algorthim is to execute the procedure below for some number of iterations until there is convergences as described in the Foundations of Computational Imaging textbook by Bouman\cite{b6}. 
+\begin{equation}
+    \begin{aligned}
+x^{(k)} &= \arg \min_x \| Ax - b \|_2^2 + \frac{\rho}{2} \| x - z^{(k-1)} + w^{(k-1)} \|_2^2 \\
+z^{(k)} &= \arg \min_z R(z) + \frac{\rho}{2} \| x^{(k)} - z + w^{(k-1)} \|_2^2 \\
+w^{(k)} &= w^{(k-1)} + x^{(k)} - z^{(k)}
+\end{aligned}
+\end{equation}
+The particular type of denoiser we apply in MATLAB is a zero mean Gaussian type with a variance that equals $\sqrt{\frac{\lambda}{\rho}}$ where $\lambda$ we vary and $\rho$ we fix at an arbitrary 0.1.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Multi-Look Processing (MLP)}
+\par The final piece of the puzzle is applying MLP to the SLC to generate a recognizable image. MLP turns out to be an algorithm which takes the average across a user-defined number of strips of the image in order to reduce the amount of speckle in the final image\cite{sarIntro}. This step can be thought of a averaging to reduce noise and is very effective. It will compress the SLC and allow for much more detail to be seen.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Methodology}
+\par The first task was to find real raw SAR data with the known SAR parameters to properlly reconstruct the point spead function of the chirped waveform to apply to the data. Datasets "E2\_84686\_STD\_L0\_F203.000" and "E2\_84699\_STD\_L0\_F295.000" were leveraged from the NASA ASF website\cite{data}. All the processing is then done in MATLAB where we begin by pulling in the data and required SAR parameters. We then can apply the Range Migration algorthim necessary to generate the first SLC image. This will become the baseline for comparison since there is no regulatization or denoising applied up to that point. We then can apply our regulatization method directly to the SLC and compare to the baseline SLC. The final step would be to apply Multi-Look Processing to both the original and the regularized/denoised variant to observe the final result. We also provide a SNR for each image that serves to be the metric for improvement. The following equation describes how the SNR is calculated:
+\begin{equation}
+    SNR = 10\cdot log_{10}(\frac{\bar{x}}{\sigma_x})
+\end{equation}
+where $\bar{x}$ is the mean and $\sigma_x$ is the variance of x. The SNR values are only calculated for the SLC baseline and SLC regularized images since those are the datasets we regularize, not the final Multi-look image.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results}
+\par The first set of findings to be discussed will be for Tikhonov regularization. We begin by showing that varying the regularization parameter, $\lambda$, can generate unique results that can be explained by the known behavior the regularization parameter has on the theory from Section II C. In Figures 1-12 we provide the the regularized SLC and Multi-look Processed images for the F203 \& F295 dataset at $\lambda$ = 1$\times$10$^{-3}$, 1$\times$10$^{-1}$, 10 respectively. We can observe that $\lambda$ = 10 has the best performance visually and via SNR for both datasets. The SNR is only calculated for the SLC image and that is the main metric we focus on  since we only apply regularization methods to the raw SAR data. 
+\par The second set of findings to be discussed will be for the MRF regualarization. We maintain a constant number of iterations throughout the two datasets to reduce number of changing variables throughout the experiment, maintaining 50 iterations. We did vary the regularization parameter, $\lambda$, between three different values: 1$\times$10$^{-3}$, 1$\times$10$^{-1}$, respectively. Figures 13-24 show the SLC and Multi-look Processed images resulting from the application of MRF regulatization. We can observe visually that a larger $\lambda$ did improve the amplitudes of the values for each pixel, while preserving the detail in the images. This is attributed to not having applied regularization to the phase component of the SLC image and simply reintroducing it after the MRF regularization is applied.
+\par The final set of findings to be discussed are for the Plug-and-Play ADMM case. Here, too, we are able to vary the number of iterations, but due to these simulations taking roughly 5 minutes per iteration, we kept them all at 5 iterations per dataset. Figures 25-36 will show the results for those regularized datasets. The regularization parameter, $\lambda$, was also varied between the two datasets, taking values 1$\times$10$^{-4}$, 1$\times$10$^{-2}$, 10 respectively. Observing Figures 34-36 we can certainly see changed happening at different values of $\lambda$. It appears there is more distortion at larger $\lambda$ (i.e. 10) versus 1$\times$10$^{-2}$ and 1$\times$10$^{-4}$. Although the SNR for larger $\lambda$ improves, the Multi-look image shows much more clear detail at smaller $\lambda$. 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Summary}
+\par In summary, we were able to take the two datasets and generate baseline SLC and Multi-look images which are used to compare against regularized SLC images. MATLAB made computing the SLC very easy to do at the cost of being time inefficient (from my experience on my laptop at least). Obtaining the necessary radar information made it possible for us to explore the few regularization methods and to come to a conclusion on which performs the best.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Conclusion}
+\par The best performing from this investigation from a SNR standpoint was the Tikhonov regularization. This regularization method was able to despeckle the image very well while preserving the detail in the image under a reasonable $\lambda$. The second best performing is Markov Random Field, from a SNR standpoint. It was able to provide us with 5 dB improvement like in the case of Figure 24 all while maintaining important geographical features from the original SLC at the top of the figure. PnP ADMM was also a good option however from a SNR standpoint there was not too much improvement and visually we can tell that it oversmoothed the image with a larger $\lambda$. 
+\par Although these were the initial results, work can be done to further improve the results. In the case of Tikhonov, an L-Curve should have been generated to find the optimal regularizer value. However, due to the 300MB size of raw data, MATLAB was hanging up on my MACBOOK laptop. Furthermore, other denoisers can be substituted into the PnP method to see if improvements can be made, for instance using a Poisson denoiser versus Gaussian or BM3D. The three methods are certainly good choices and each have their place. 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section*{Acknowledgment}
+\par I would like to thank Dr. Vivek Goyal for offering an excellent EC717 Image Reconstruction and Restoration course at Boston University and supporting his students throughout the semester. The course was extremely eye-opening and exposed an entire world that was unknown to me. I would also like to thank NASA ASF for having open source SAR datasets available for analysis.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{thebibliography}{00}
+\bibitem{sarHist} Inggs, Michael. “Synthetic aperture radar during the 50 years of the aerospace and Electronic Systems Society.” IEEE Aerospace and Electronic Systems Magazine, vol. 38, no. 1, 1 Jan. 2023, pp. 22–31, https://doi.org/10.1109/maes.2022.3216263. 
+\bibitem{nisar} “Giant Radar Antenna Reflector on NASA-ISRO Satellite in Full ‘Bloom.’” NASA, NASA, www.jpl.nasa.gov/news/giant-radar-antenna-reflector-on-nasa-isro-satellite-in-full-bloom/. Accessed 3 May 2026. 
+\bibitem{sarIntro} An Introduction to SAR and Its Applications Part 1, https://appliedsciences.nasa.gov/sites/default/files/2024-11/SAR{\_}2024{\_}Part1{\_}English{\_}FINAL.pdf Accessed 3 May 2026. 
+\bibitem{data} NASA Alaska Satellite Facility, search.asf.alaska.edu/{\#}/?zoom=3.000{\&}center=-99.472,67.657{\&}resultsLoaded=true{\&}granule=E2{\_}84686{\_}STD{\_}F203-L1{\&}dataset=ERS
+\bibitem{mahafza}Mahafza, Bassem R. Radar Systems Analysis and Design Using MAT- LAB. CRC Press, 2000.
+\bibitem{linEtAl} Li, Lin, et al. “Modeling and simulation of single-look complex images for distributed satelliteborne interferometric synthetic aperture radar.” 2009 2nd International Congress on Image and Signal Processing, Oct. 2009, pp. 1–5, https://doi.org/10.1109/cisp.2009.5300874. 
+\bibitem{hansen}Hansen, Per Christian. Discrete Inverse Problems: Insight and Algorithms. Society for Industrial and Applied Mathematics, 2010. 
+\bibitem{mrfDespeck} Walessa, M., and M. Datcu. “Model-based despeckling and information extraction from SAR Images.” IEEE Transactions on Geoscience and Remote Sensing, vol. 38, no. 5, 2000, pp. 2258–2269, https://doi.org/10.1109/36.868883. 
+\bibitem{b3} Plug-and-Play Synthetic Aperture Radar Image Formation Using Deep Priors | IEEE Journals \& Magazine | IEEE Xplore, ieeexplore.ieee.org/document/9308950/. Accessed 22 Apr. 2026. 
+\bibitem{b6} Bouman, Charles Addison. Foundations of Computational Imaging: A Model-Based Approach. Society for Industrial and Applied Mathematics, 2022. 
+\bibitem{b7} Hansen, Per Christian. Fundamentals of Algorithms 7. Discrete Inverse Problems: Insight and Algorithms Per Christian Hansen. Society for Industrial and Applied Mathematics, 2010. 
+\bibitem{b8} Bouman, C., and K. Sauer. “A generalized gaussian image model for edge-preserving map estimation.” IEEE Transactions on Image Processing, vol. 2, no. 3, July 1993, pp. 296–310, https://doi.org/10.1109/83.236536. 
+\bibitem{b9mrf} Lei Ying, et al. “Unwrapping of mr phase images using a Markov random field model.” IEEE Transactions on Medical Imaging, vol. 25, no. 1, Jan. 2006, pp. 128–136, https://doi.org/10.1109/tmi.2005.861021. 
+\end{thebibliography}
+\vspace{12pt}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%\newpage
+\section*{Figures}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%F203%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%TIKHONOV%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults203/slc_lamb_0p001.png}
+    \caption{F203 Dataset, SLC, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$}
+    \label{tik203_slc_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults203/slc_lamb_0p1.png}
+    \caption{F203 Dataset, SLC, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$}
+    \label{tik203_slc_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults203/slc_lamb_10.png}
+    \caption{F203 Dataset, SLC, Tikhonov Regularization Applied, $\lambda$ = 10}
+    \label{tik203_slc_10}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults203/ml_lamb_0p001.png}
+    \caption{F203 Dataset, ML, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$}
+    \label{tik203_ml_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults203/ml_lamb_0p1.png}
+    \caption{F203 Dataset, ML, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$}
+    \label{tik203_ml_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults203/ml_lamb_10.png}
+    \caption{F203 Dataset, ML, Tikhonov Regularization Applied, $\lambda$ = 10}
+    \label{tik203_ml_10}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%F295%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%TIKHONOV%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults295/slc_lamb_0p001.png}
+    \caption{F295 Dataset, SLC, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$}
+    \label{tik295_slc_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults295/slc_lamb_0p1.png}
+    \caption{F295 Dataset, SLC, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$}
+    \label{tik295_slc_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults295/slc_lamb_10.png}
+    \caption{F295 Dataset, SLC, Tikhonov Regularization Applied, $\lambda$ = 10}
+    \label{tik295_slc_10}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults295/ml_lamb_0p001.png}
+    \caption{F295 Dataset, ML, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$}
+    \label{tik295_ml_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults295/ml_lamb_0p1.png}
+    \caption{F295 Dataset, ML, Tikhonov Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$}
+    \label{tik295_ml_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{tikRegResults295/ml_lamb_10.png}
+    \caption{F295 Dataset, ML, Tikhonov Regularization Applied, $\lambda$ = 10}
+    \label{tik295_ml_10}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%F203%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%MRF%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults203/slc_mrf_lam_0p001_it_50.png}
+    \caption{F203 Dataset, SLC, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$, 50 Iterations}
+    \label{mrf203_slc_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults203/slc_mrf_lam_0p1_it_50.png}
+    \caption{F203 Dataset, SLC, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$, 50 Iterations}
+    \label{mrf203_slc_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults203/slc_mrf_lam_10_it_50.png}
+    \caption{F203 Dataset, SLC, MRF Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{mrf203_slc_10}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults203/ml_mrf_lam_0p001_it_50.png}
+    \caption{F203 Dataset, ML, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$, 50 Iterations}
+    \label{mrf205_ml_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults203/ml_mrf_lam_0p1_it_50.png}
+    \caption{F203 Dataset, ML, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$, 50 Iterations}
+    \label{mrf203_ml_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults203/ml_mrf_lam_10_it_50.png}
+    \caption{F203 Dataset, ML, MRF Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{mrf203_ml_10}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%F295%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%MRF%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults295/slc_mrf_lam_0p001_it_50.png}
+    \caption{F295 Dataset, SLC, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$, 50 Iterations}
+    \label{mrf295_slc_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults295/slc_mrf_lam_0p1_it_50.png}
+    \caption{F295 Dataset, SLC, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$, 50 Iterations}
+    \label{mrf295_slc_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults295/slc_mrf_lam_10_it_50.png}
+    \caption{F295 Dataset, SLC, MRF Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{mrf295_slc_10}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults295/ml_mrf_lam_0p001_it_50.png}
+    \caption{F295 Dataset, ML, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-3}$, 50 Iterations}
+    \label{mrf295_ml_0p001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults295/ml_mrf_lam_0p1_it_50.png}
+    \caption{F295 Dataset, ML, MRF Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$, 50 Iterations}
+    \label{mrf295_ml_0p1}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{mrfResults295/ml_mrf_lam_10_it_50.png}
+    \caption{F295 Dataset, ML, MRF Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{mrf295_ml_10}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%F203%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%PNP%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults203/slc_lambda_0p00001_it_5.png}
+    \caption{F203 Dataset, SLC, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-4}$, 5 Iterations}
+    \label{pnp203_slc_0p0001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults203/slc_lambda_0p01_it_5.png}
+    \caption{F203 Dataset, SLC, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-2}$, 5 Iterations}
+    \label{pnp203_slc_0p01}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults203/slc_lambda_10_it_5.png}
+    \caption{F203 Dataset, SLC, PNP ADMM Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{pnp203_slc_10}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults203/ml_lambda_0p00001_it_5.png}
+    \caption{F203 Dataset, ML, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-4}$, 50 Iterations}
+    \label{pnp203_ml_0p0001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults203/ml_lambda_0p01_it_5.png}
+    \caption{F203 Dataset, ML, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$, 50 Iterations}
+    \label{pnp203_ml_0p01}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults203/ml_lambda_10_it_5.png}
+    \caption{F203 Dataset, ML, PNP ADMM Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{pnp203_ml_10}
+\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%F295%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%PNP%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults295/slc_lambda_0p00001_it_5.png}
+    \caption{F295 Dataset, SLC, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-4}$, 5 Iterations}
+    \label{pnp295_slc_0p0001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults295/slc_lambda_0p01_it_5.png}
+    \caption{F295 Dataset, SLC, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-2}$, 5 Iterations}
+    \label{pnp295_slc_0p01}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults295/slc_lambda_10_it_5.png}
+    \caption{F295 Dataset, SLC, PNP ADMM Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{pnp295_slc_10}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults295/ml_lambda_0p00001_it_5.png}
+    \caption{F295 Dataset, ML, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-4}$, 50 Iterations}
+    \label{pnp295_ml_0p0001}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults295/ml_lambda_0p01_it_5.png}
+    \caption{F295 Dataset, ML, PNP ADMM Regularization Applied, $\lambda$ = 1$\times$10$^{-1}$, 50 Iterations}
+    \label{pnp295_ml_0p01}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.3\textwidth]{pnpAdmmResults295/ml_lambda_10_it_5.png}
+    \caption{F295 Dataset, ML, PNP ADMM Regularization Applied, $\lambda$ = 10, 50 Iterations}
+    \label{pnp295_ml_10}
+\end{figure}
+\end{document}
